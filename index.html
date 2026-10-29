@@ -1,0 +1,415 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Net Sales FX Analyzer | CS LATAM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+</head>
+<body>
+  <div id="loading-overlay" class="loading-overlay hidden" aria-live="polite">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <p id="loading-text">Loading data…</p>
+    </div>
+  </div>
+
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <p class="eyebrow">CS LATAM Inventory Management</p>
+        <h1>Net Sales · Inventory · ISR</h1>
+      </div>
+    </div>
+    <div class="header-meta">
+      <div class="fx-badge" id="fx-badge">
+        <span class="fx-badge-label">FX Plan</span>
+        <strong id="fx-badge-value">—</strong>
+      </div>
+      <div class="meta-block">
+        <span class="meta-label">Last load</span>
+        <span id="last-load">Not loaded</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Data Sources</h2>
+        </div>
+        <div class="file-grid">
+          <label class="file-field">
+            <span>History Net Sales</span>
+            <input type="file" id="file-history" accept=".xlsx,.xls" />
+          </label>
+          <label class="file-field">
+            <span>History Inventory</span>
+            <input type="file" id="file-inventory" accept=".xlsx,.xls" />
+          </label>
+          <label class="file-field">
+            <span>FX Rates</span>
+            <input type="file" id="file-fx" accept=".xlsx,.xls" />
+          </label>
+        </div>
+        <button type="button" class="btn btn-primary" id="btn-load-default">Load default files</button>
+        <p class="hint">Defaults: <code>History_Net Sales.xlsx</code>, <code>History_Inventory.xlsx</code>, <code>fx rates.xlsx</code> (local HTTP server).</p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Filters</h2>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-clear-filters">Clear</button>
+        </div>
+
+        <label class="field">
+          <span>FX Rate Plan</span>
+          <select id="filter-fx"></select>
+        </label>
+
+        <div class="field">
+          <span>Business</span>
+          <div class="chip-group" id="filter-business"></div>
+        </div>
+
+        <div class="field">
+          <span>Cluster</span>
+          <div class="chip-group" id="filter-cluster"></div>
+        </div>
+
+        <div class="field hidden" id="rowcrops-filter-wrap">
+          <span>Row Crops Segment</span>
+          <div class="chip-group" id="filter-segment"></div>
+        </div>
+
+        <div class="field" id="scenario-filter-wrap">
+          <span>Scenario</span>
+          <div class="chip-group single" id="filter-scenario">
+            <button type="button" class="chip chip-act active" data-value="ACT">ACT</button>
+          </div>
+          <p class="hint" id="scenario-hint">ACT and each FCn stay separate. ISR always matches the same scenario on both sides.</p>
+          <p class="hint warn-hint" id="scenario-overlap-hint"></p>
+        </div>
+
+        <div class="field">
+          <span>Years</span>
+          <div class="chip-group" id="filter-year"></div>
+        </div>
+
+        <div class="field">
+          <span>Months</span>
+          <div class="chip-group" id="filter-month"></div>
+          <p class="hint">Monthly detail available for 2025–2026 only.</p>
+        </div>
+      </section>
+
+      <section class="panel alerts-panel">
+        <div class="panel-head">
+          <h2>Data Quality</h2>
+        </div>
+        <div id="alert-summary" class="alert-summary">
+          <p>Load data to run validations.</p>
+        </div>
+        <div id="alert-list" class="alert-list"></div>
+      </section>
+    </aside>
+
+    <section class="content">
+      <div class="kpi-grid" id="kpi-grid">
+        <article class="kpi-card">
+          <span class="kpi-label">Latest Year</span>
+          <strong class="kpi-value" id="kpi-latest-year">—</strong>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Net Sales Latest Year (mEUR)</span>
+          <strong class="kpi-value" id="kpi-latest-value">—</strong>
+          <span class="kpi-sub" id="kpi-scenario-note">—</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Abs. vs Prior Year</span>
+          <strong class="kpi-value" id="kpi-abs">—</strong>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">% vs Prior Year</span>
+          <strong class="kpi-value" id="kpi-pct">—</strong>
+        </article>
+        <article class="kpi-card accent">
+          <span class="kpi-label">Selected FX Plan</span>
+          <strong class="kpi-value" id="kpi-fx">—</strong>
+        </article>
+        <article class="kpi-card accent" id="kpi-isr-card">
+          <span class="kpi-label">ISR — Inventory / Net Sales</span>
+          <strong class="kpi-value" id="kpi-isr">—</strong>
+          <span class="kpi-sub" id="kpi-isr-meta">—</span>
+        </article>
+      </div>
+
+      <nav class="view-tabs" id="view-tabs" aria-label="Main views">
+        <button type="button" class="view-tab active" data-view="summary">Summary</button>
+        <button type="button" class="view-tab" data-view="tables">Tables</button>
+        <button type="button" class="view-tab" data-view="detail">Detail</button>
+      </nav>
+
+      <!-- SUMMARY: charts -->
+      <div class="view-panel" id="view-summary" data-view-panel="summary">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Historical Net Sales</h2>
+              <p class="card-sub">Year-by-year · mEUR at selected FX</p>
+            </div>
+            <div class="segmented" id="history-breakdown">
+              <button type="button" class="seg active" data-mode="Total">Total</button>
+              <button type="button" class="seg" data-mode="Business">Business</button>
+              <button type="button" class="seg" data-mode="Cluster">Cluster</button>
+              <button type="button" class="seg" data-mode="Segment">Row Crops Segment</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chart-history"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Historical Inventory</h2>
+              <p class="card-sub">Year-by-year · mEUR (display ÷ 1000) · same filters</p>
+            </div>
+            <div class="segmented" id="inventory-history-breakdown">
+              <button type="button" class="seg active" data-mode="Total">Total</button>
+              <button type="button" class="seg" data-mode="Business">Business</button>
+              <button type="button" class="seg" data-mode="Cluster">Cluster</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chart-inventory"></canvas>
+          </div>
+        </div>
+
+        <div class="card-grid">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h2>Net Sales Composition</h2>
+                <p class="card-sub">Latest selected year · mEUR</p>
+              </div>
+              <select id="composition-dimension" class="inline-select">
+                <option value="Business">Business</option>
+                <option value="Cluster">Cluster</option>
+                <option value="Segment">Row Crops Segment</option>
+              </select>
+            </div>
+            <div class="chart-wrap chart-wrap-sm">
+              <canvas id="chart-composition"></canvas>
+            </div>
+          </div>
+          <div class="card hint-card">
+            <div class="card-head">
+              <div>
+                <h2>How to navigate</h2>
+                <p class="card-sub">Use the tabs above to switch views</p>
+              </div>
+            </div>
+            <ul class="nav-hints">
+              <li><strong>Summary</strong> — KPIs and charts (Net Sales + Inventory)</li>
+              <li><strong>Tables</strong> — executive pivots for Net Sales, Inventory and ISR</li>
+              <li><strong>Detail</strong> — row-level tables and FX / ISR audit</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- TABLES: executive pivots -->
+      <div class="view-panel hidden" id="view-tables" data-view-panel="tables">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Net Sales</h2>
+              <p class="card-sub">Cluster × Business · mEUR · <span id="pivot-fx-label">@FX</span></p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-export-net-sales">Export</button>
+          </div>
+          <div class="pivot-scroll">
+            <table class="pivot-table" id="pivot-net-sales"></table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Net Sales SBE RC</h2>
+              <p class="card-sub">Row Crops by Cluster × Segment · mEUR · <span id="pivot-rc-fx-label">@FX</span></p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-export-rc">Export</button>
+          </div>
+          <div class="pivot-scroll">
+            <table class="pivot-table" id="pivot-rc"></table>
+          </div>
+        </div>
+
+        <div class="card" id="inventory-section">
+          <div class="card-head">
+            <div>
+              <h2>Inventory (mEUR)</h2>
+              <p class="card-sub">Same FX &amp; filters · mEUR · <span id="inv-fx-label">@FX</span></p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-export-inventory">Export</button>
+          </div>
+          <div class="pivot-scroll">
+            <table class="pivot-table" id="pivot-inventory"></table>
+          </div>
+        </div>
+
+        <div class="card" id="isr-section">
+          <div class="card-head">
+            <div>
+              <h2>ISR (%)</h2>
+              <p class="card-sub">Inventory / Net Sales × 100 · same Scenario · <span id="isr-fx-label">@FX</span></p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-export-isr">Export</button>
+          </div>
+          <div class="pivot-scroll">
+            <table class="pivot-table" id="pivot-isr"></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- DETAIL: row-level tables -->
+      <div class="view-panel hidden" id="view-detail" data-view-panel="detail">
+        <div class="card-grid">
+          <div class="card audit-card" id="audit-panel">
+            <div class="card-head">
+              <div>
+                <h2>Net Sales — FX Audit</h2>
+                <p class="card-sub">Click a Net Sales detail row</p>
+              </div>
+            </div>
+            <div id="audit-body" class="audit-body">
+              <p class="empty-state">No row selected.</p>
+            </div>
+          </div>
+          <div class="card audit-card">
+            <div class="card-head">
+              <div>
+                <h2>ISR — Calculation Audit</h2>
+                <p class="card-sub">Click an ISR detail row</p>
+              </div>
+            </div>
+            <div id="isr-audit-body" class="audit-body">
+              <p class="empty-state">No ISR row selected.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Net Sales — Detailed Table</h2>
+              <p class="card-sub" id="table-count">0 rows</p>
+            </div>
+            <div class="table-actions">
+              <input type="search" id="table-search" placeholder="Search table…" />
+              <button type="button" class="btn btn-secondary" id="btn-export">Export CSV</button>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table id="detail-table">
+              <thead>
+                <tr>
+                  <th data-sort="year">Year</th>
+                  <th data-sort="month">Month</th>
+                  <th data-sort="business">Business</th>
+                  <th data-sort="cluster">Cluster</th>
+                  <th data-sort="segment">Segment</th>
+                  <th data-sort="currency">Currency</th>
+                  <th data-sort="scenario">Scenario</th>
+                  <th data-sort="originalValue">Original</th>
+                  <th data-sort="originalValueType">Original Type</th>
+                  <th data-sort="fxOriginal">FX Orig.</th>
+                  <th data-sort="fxSelected">FX Sel.</th>
+                  <th data-sort="convertedEur">EUR Converted</th>
+                </tr>
+              </thead>
+              <tbody id="table-body"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button type="button" class="btn btn-ghost btn-sm" id="page-prev">Previous</button>
+            <span id="page-info">Page 1</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="page-next">Next</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Inventory — Detailed Table</h2>
+              <p class="card-sub" id="inv-table-count">0 rows</p>
+            </div>
+            <div class="table-actions">
+              <input type="search" id="inv-table-search" placeholder="Search inventory…" />
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table id="inventory-detail-table">
+              <thead>
+                <tr>
+                  <th data-inv-sort="year">Year</th>
+                  <th data-inv-sort="month">Month</th>
+                  <th data-inv-sort="business">Business</th>
+                  <th data-inv-sort="cluster">Cluster</th>
+                  <th data-inv-sort="segment">Segment</th>
+                  <th data-inv-sort="currency">Currency</th>
+                  <th data-inv-sort="scenario">Scenario</th>
+                  <th data-inv-sort="originalValue">Original</th>
+                  <th data-inv-sort="originalValueType">Original Type</th>
+                  <th data-inv-sort="originalFxPlan">Orig. FX Plan</th>
+                  <th data-inv-sort="fxOriginal">FX Orig.</th>
+                  <th data-inv-sort="fxSelected">FX Sel.</th>
+                  <th data-inv-sort="convertedInventoryEur">Inventory (mEUR)</th>
+                </tr>
+              </thead>
+              <tbody id="inventory-table-body"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button type="button" class="btn btn-ghost btn-sm" id="inv-page-prev">Previous</button>
+            <span id="inv-page-info">Page 1</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="inv-page-next">Next</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>ISR — Detail</h2>
+              <p class="card-sub">Click a row for calculation audit</p>
+            </div>
+          </div>
+          <div class="pivot-scroll">
+            <table class="pivot-table" id="isr-table"></table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span>Local browser tool · Net Sales unchanged · Inventory + ISR use the same FX plan and Scenario matching</span>
+  </footer>
+
+  <script src="app.js"></script>
+  <script src="inventory.js"></script>
+  <script src="isr.js"></script>
+  <script src="inventory-ui.js"></script>
+</body>
+</html>
